@@ -17,7 +17,6 @@ namespace OracleG2MenuitemsUpdate
             {
                 DataAccess dataAccess = new DataAccess();
                 OracleG2MenuitemsUpdate MenuitemsUpdate = new OracleG2MenuitemsUpdate();
-                //tokenHandler.update_availablemenuItems_SSP();
                 MenuitemsUpdate.update_menuItems_SSP();
                 Utilities.WriteLog($"{task} task completed.");
             }
