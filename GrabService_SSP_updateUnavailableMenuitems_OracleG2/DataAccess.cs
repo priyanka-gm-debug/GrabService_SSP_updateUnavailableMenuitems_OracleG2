@@ -105,5 +105,25 @@ namespace GrabService_SSP_updateUnavailableMenuitems_OracleG2
                 return cmd.ExecuteNonQuery(); // returns number of affected rows
             }
         }
+
+        public DataTable ExecuteSelectDataTable(string storedProcedure, Action<SqlCommand> addParameters = null)
+        {
+            using (SqlConnection conn = new SqlConnection(_connectionString))
+            using (SqlCommand cmd = new SqlCommand(storedProcedure, conn))
+            {
+                cmd.CommandType = CommandType.StoredProcedure;
+                addParameters?.Invoke(cmd);
+
+                using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                {
+                    DataTable dt = new DataTable();
+                    adapter.Fill(dt);
+                    return dt;
+                }
+
+            }
+        }
+
     }
+
 }
