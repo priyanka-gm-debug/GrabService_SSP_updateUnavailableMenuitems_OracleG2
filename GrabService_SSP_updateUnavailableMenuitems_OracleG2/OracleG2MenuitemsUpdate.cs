@@ -81,7 +81,7 @@ namespace OracleG2MenuitemsUpdate
                 string disableQuery = @"SELECT GrabStoreWaypointID,orgShortName,organizationName,locRef,rvcRef,urlAPI,urlOAuth FROM tb_Cursus_OracleG2_StoreLoadFilterJoin WITH (NOLOCK)
                                     WHERE EXISTS (
                                         SELECT 1 FROM Fetch_Waypoints_InventoryUpdate w WITH (NOLOCK)
-                                        WHERE GrabStoreWaypointID = w.WaypointId and w.WaypointId in('38156','38047','38177'))";
+                                        WHERE GrabStoreWaypointID = w.WaypointId)";
 
                 var dsDisable = dalog.ExecuteSelectQuery(disableQuery);
 
