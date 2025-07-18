@@ -10,7 +10,7 @@ namespace OracleG2MenuitemsUpdate
     {
         static void Main(string[] args)
         {
-            string task = args.Length > 0 ? args[0].ToLower() : "At every 20 min";
+            string task = args.Length > 0 ? args[0].ToLower() : "At every 1 hour";
 
             Utilities.WriteLog($"Starting {task} task...");
             try

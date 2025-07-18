@@ -32,11 +32,12 @@ namespace OracleG2MenuitemsUpdate
             {
                 Utilities.WriteLog("Connected to database.");
 
-               string enableQuery = @"SELECT * FROM tb_Cursus_OracleG2_StoreLoadFilterJoin WITH (NOLOCK)
-                                    WHERE EXISTS (
-                                        SELECT 1 FROM tb_Cursus_InventoryUpdate_Log l WITH (NOLOCK)
-                                        JOIN tb_Cursus_StoreInventoryMainV2 m WITH (NOLOCK) ON l.InventoryItemId = m.InventoryItemId
-                                        WHERE l.NewValue = 0 AND m.InventoryItemavailable = 0 AND l.Storewaypointid = Grabstorewaypointid)";
+                string enableQuery = @"SELECT * FROM tb_Cursus_OracleG2_StoreLoadFilterJoin fl WITH(NOLOCK)
+                                    WHERE EXISTS(
+                                        SELECT 1 FROM tb_Cursus_InventoryUpdate_Log l WITH(NOLOCK)
+                                        JOIN tb_Cursus_OracleG2_SubMenu sm WITH(NOLOCK) ON sm.menuitemid = l.menuitemid
+                                        JOIN tb_Cursus_StoreInventoryMainV2 m WITH(NOLOCK) ON sm.InventoryItemId = m.InventoryItemId
+                                        WHERE l.NewValue = 0 AND m.InventoryItemavailable = 0 AND fl.GrabStoreWaypointID = l.Storewaypointid)";
 
 
                 var dsEnable = dalog.ExecuteSelectQuery(enableQuery);
@@ -81,7 +82,7 @@ namespace OracleG2MenuitemsUpdate
                 string disableQuery = @"SELECT GrabStoreWaypointID,orgShortName,organizationName,locRef,rvcRef,urlAPI,urlOAuth FROM tb_Cursus_OracleG2_StoreLoadFilterJoin WITH (NOLOCK)
                                     WHERE EXISTS (
                                         SELECT 1 FROM Fetch_Waypoints_InventoryUpdate w WITH (NOLOCK)
-                                        WHERE GrabStoreWaypointID = w.WaypointId)";
+                                        WHERE GrabStoreWaypointID = w.WaypointId )";
 
                 var dsDisable = dalog.ExecuteSelectQuery(disableQuery);
 
@@ -111,7 +112,7 @@ namespace OracleG2MenuitemsUpdate
                             var result = dalog.ExecuteSelectDataTable("sp_Batch_DisableMenuItems", cmd => cmd.Parameters.Add(param));
                             int updatedRows = Convert.ToInt32(result.Rows[0]["RowsUpdated"]);
 
-                            Utilities.WriteLog($"Batch of {batchTable.Rows.Count} disabled ({updatedRows} actually updated) in {spWatch.ElapsedMilliseconds}ms");
+                            Utilities.WriteLog($"Batch of {batchTable.Rows.Count} disabled (actually updated) in {spWatch.ElapsedMilliseconds}ms");
                             Thread.Sleep(delay);
                         }
                     }
@@ -152,13 +153,13 @@ namespace OracleG2MenuitemsUpdate
                     jsonObj["items"].SelectMany(item => item["definitions"]
                         .Select(def => $"{item["menuItemId"]}:{def["definitionSequence"]}"))) : new HashSet<string>();
 
-
                 var dsLog = dalog.ExecuteSelectQuery($@"
-                    SELECT l.StorewaypointId, l.InventoryItemId, l.InventoryItemName, l.menuitemId,
-                           LEFT(l.MenuItemId_DefSeq_PriceSeq, 11) AS MenuItemIdSeq
-                    FROM tb_Cursus_InventoryUpdate_Log l WITH (NOLOCK)
-                    JOIN tb_Cursus_StoreInventoryMainV2 m WITH (NOLOCK) ON l.InventoryItemId = m.InventoryItemId
-                    WHERE l.NewValue = 0 AND m.InventoryItemavailable = 0 AND l.StorewaypointId = '{storewaypointId}'");
+                     SELECT DISTINCT l.StorewaypointId, l.InventoryItemId, l.InventoryItemName, l.menuitemId,
+                     LEFT(l.MenuItemId_DefSeq_PriceSeq, 11) AS MenuItemIdSeq
+                     FROM tb_Cursus_InventoryUpdate_Log l WITH (NOLOCK)
+                     JOIN tb_Cursus_OracleG2_SubMenu sm WITH (NOLOCK) ON sm.menuitemid = l.menuitemid
+                     JOIN tb_Cursus_StoreInventoryMainV2 m WITH (NOLOCK) ON sm.InventoryItemId = m.InventoryItemId
+                     WHERE l.NewValue = 0 AND m.InventoryItemavailable = 0 AND l.StorewaypointId = '{storewaypointId}'");
 
 
                 foreach (DataRow row in dsLog.Tables[0].Rows)

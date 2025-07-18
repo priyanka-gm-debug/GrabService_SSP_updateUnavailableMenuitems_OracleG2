@@ -5,3 +5,17 @@ obj/
 *.exe
 *.cache
 *.Up2Date
+bin/
+obj/
+.vs/
+*.pdb
+*.exe
+*.cache
+*.Up2Date
+bin/
+obj/
+.vs/
+*.pdb
+*.exe
+*.cache
+*.Up2Date

@@ -3,7 +3,7 @@ using System.IO;
 
 public static class Utilities
 {
-    private static readonly string logFilePath = @"C:\Temp\STAGE_SSP_Unavailable_MenuItems.txt";
+    private static readonly string logFilePath = @"C:\Temp\PROD_SSP_Unavailable_MenuItems.txt";
 
     public static void WriteLog(string message)
     {
