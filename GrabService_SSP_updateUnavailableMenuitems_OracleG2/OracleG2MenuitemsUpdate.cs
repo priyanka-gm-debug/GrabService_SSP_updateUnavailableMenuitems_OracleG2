@@ -9,6 +9,8 @@ using Newtonsoft.Json;
 using System.Text;
 using GrabService_SSP_updateUnavailableMenuitems_OracleG2;
 using System.Linq;
+using System.Diagnostics;
+using System.Threading;
 
 namespace OracleG2MenuitemsUpdate
 {
@@ -16,28 +18,31 @@ namespace OracleG2MenuitemsUpdate
     {
         public void update_menuItems_SSP()
         {
+            Stopwatch totalWatch = Stopwatch.StartNew();
             DataAccess dalog = new DataAccess();
             DataTable dtBatchEnable = CreateEnableBatchDataTable();
             DataTable dtBatchDisable = CreateDisableBatchDataTable();
+
+            // Fetch config
+            var config = dalog.ExecuteSelectQuery("SELECT TOP 1 BatchSize, DelayMS FROM tb_Cursus_MenuUpdate_Config WITH (NOLOCK)").Tables[0].Rows[0];
+            int batchSize = Convert.ToInt32(config["BatchSize"]);
+            int delay = Convert.ToInt32(config["DelayMS"]);
 
             try
             {
                 Utilities.WriteLog("Connected to database.");
 
-                string enableQuery = @"SELECT * FROM tb_Cursus_OracleG2_StoreLoadFilterJoin 
-                                WHERE Grabstorewaypointid IN (
-                                    SELECT storewaypointid 
-                                    FROM tb_Cursus_InventoryUpdate_Log 
-                                    WHERE NewValue = 0 
-                                      AND Inventoryitemid IN (
-                                          SELECT inventoryitemid 
-                                          FROM tb_Cursus_StoreInventoryMainV2 
-                                          WHERE InventoryItemavailable = 0))";
+                string enableQuery = @"SELECT * FROM tb_Cursus_OracleG2_StoreLoadFilterJoin fl WITH(NOLOCK)
+                                    WHERE EXISTS(
+                                        SELECT 1 FROM tb_Cursus_InventoryUpdate_Log l WITH(NOLOCK)
+                                        JOIN tb_Cursus_OracleG2_SubMenu sm WITH(NOLOCK) ON sm.menuitemid = l.menuitemid
+                                        JOIN tb_Cursus_StoreInventoryMainV2 m WITH(NOLOCK) ON sm.InventoryItemId = m.InventoryItemId
+                                        WHERE l.NewValue = 0 AND m.InventoryItemavailable = 0 AND fl.GrabStoreWaypointID = l.Storewaypointid)";
 
-                DataSet dsEnable = dalog.ExecuteSelectQuery(enableQuery);
-                Utilities.WriteLog("Connected to SQL server for enabled items check.");
 
-                if (dsEnable.Tables.Count > 0 && dsEnable.Tables[0].Rows.Count > 0)
+                var dsEnable = dalog.ExecuteSelectQuery(enableQuery);
+
+                if (dsEnable.Tables.Count > 0)
                 {
                     foreach (DataRow drCred in dsEnable.Tables[0].Rows)
                     {
@@ -46,170 +51,162 @@ namespace OracleG2MenuitemsUpdate
 
                     if (dtBatchEnable.Rows.Count > 0)
                     {
-                        SqlParameter param = new SqlParameter("@MenuItemsToEnable", SqlDbType.Structured)
-                        {
-                            TypeName = "dbo.EnableLogTVPType",
-                            Value = dtBatchEnable
-                        };
+                        Utilities.WriteLog($"Enable batch size: {dtBatchEnable.Rows.Count}");
 
-                        int updated = dalog.ExecuteStoredProcedureforupdate("sp_Batch_EnableMenuItems", cmd =>
+                        foreach (var batch in dtBatchEnable.AsEnumerable().Batch(batchSize))
                         {
-                            cmd.Parameters.Add(param);
-                        });
+                            Stopwatch spWatch = Stopwatch.StartNew();
+                            DataTable batchTable = dtBatchEnable.Clone();
+                            foreach (var row in batch) batchTable.ImportRow(row);
 
-                        Utilities.WriteLog($"Updated {updated} items as available via batch across stores.");
+                            SqlParameter param = new SqlParameter("@MenuItemsToEnable", SqlDbType.Structured)
+                            {
+                                TypeName = "dbo.EnableLogTVPType",
+                                Value = batchTable
+                            };
+
+                            var result = dalog.ExecuteSelectDataTable("sp_Batch_EnableMenuItems", cmd => cmd.Parameters.Add(param));
+                            int updatedRows = Convert.ToInt32(result.Rows[0]["RowsUpdated"]);
+
+                            Utilities.WriteLog($"Batch of {batchTable.Rows.Count} enabled ({updatedRows} actually updated) in {spWatch.ElapsedMilliseconds}ms");
+                            Thread.Sleep(delay);
+                        }
+                    }
+                    else
+                    {
+                        Utilities.WriteLog("✅ No menu items to enable.");
                     }
                 }
-                else
+
+
+                string disableQuery = @"SELECT GrabStoreWaypointID,orgShortName,organizationName,locRef,rvcRef,urlAPI,urlOAuth FROM tb_Cursus_OracleG2_StoreLoadFilterJoin WITH (NOLOCK)
+                                    WHERE EXISTS (
+                                        SELECT 1 FROM Fetch_Waypoints_InventoryUpdate w WITH (NOLOCK)
+                                        WHERE GrabStoreWaypointID = w.WaypointId )";
+
+                var dsDisable = dalog.ExecuteSelectQuery(disableQuery);
+
+                if (dsDisable.Tables[0].Rows.Count > 0)
                 {
-                    Utilities.WriteLog("No items found to enable.");
-                }
-
-                string disableQuery = @"SELECT * FROM tb_Cursus_OracleG2_StoreLoadFilterJoin 
-                                 WHERE GrabStoreWaypointID IN (
-                                     SELECT WaypointId FROM Fetch_Waypoints_InventoryUpdate)";
-
-                DataSet dsCredsDisable = dalog.ExecuteSelectQuery(disableQuery);
-
-                if (dsCredsDisable.Tables.Count > 0 && dsCredsDisable.Tables[0].Rows.Count > 0)
-                {
-                    foreach (DataRow drCred in dsCredsDisable.Tables[0].Rows)
+                    foreach (DataRow drCred in dsDisable.Tables[0].Rows)
                     {
                         ProcessDisableMenuItems(drCred, dalog, dtBatchDisable);
                     }
 
                     if (dtBatchDisable.Rows.Count > 0)
                     {
-                        SqlParameter param = new SqlParameter("@MenuItemsToDisable", SqlDbType.Structured)
-                        {
-                            TypeName = "dbo.DisableLogTVPType",
-                            Value = dtBatchDisable
-                        };
+                        Utilities.WriteLog($"Disable batch size: {dtBatchDisable.Rows.Count}");
 
-                        int disabled = dalog.ExecuteStoredProcedureforupdate("sp_Batch_DisableMenuItems", cmd =>
+                        foreach (var batch in dtBatchDisable.AsEnumerable().Batch(batchSize))
                         {
-                            cmd.Parameters.Add(param);
-                        });
+                            Stopwatch spWatch = Stopwatch.StartNew();
+                            DataTable batchTable = dtBatchDisable.Clone();
+                            foreach (var row in batch) batchTable.ImportRow(row);
 
-                        Utilities.WriteLog($"Disabled {disabled} menu items across stores via batch.");
+                            SqlParameter param = new SqlParameter("@MenuItemsToDisable", SqlDbType.Structured)
+                            {
+                                TypeName = "dbo.DisableLogTVPType",
+                                Value = batchTable
+                            };
+
+                            var result = dalog.ExecuteSelectDataTable("sp_Batch_DisableMenuItems", cmd => cmd.Parameters.Add(param));
+                            int updatedRows = Convert.ToInt32(result.Rows[0]["RowsUpdated"]);
+
+                            Utilities.WriteLog($"Batch of {batchTable.Rows.Count} disabled (actually updated) in {spWatch.ElapsedMilliseconds}ms");
+                            Thread.Sleep(delay);
+                        }
+                    }
+                    else
+                    {
+                        Utilities.WriteLog("✅ No menu items to disable.");
                     }
                 }
-                else
-                {
-                    Utilities.WriteLog("No specific stores found to disable items.");
-                }
+
+                Utilities.WriteLog($"✅ Total menu update process completed in {totalWatch.Elapsed.TotalSeconds} seconds");
             }
             catch (Exception ex)
             {
-                Utilities.WriteLog($"❌ An error occurred in update_menuItems_SSP: {ex.Message}");
+                Utilities.WriteLog($"❌ Error in update_menuItems_SSP: {ex.Message}");
             }
         }
 
         private void ProcessStoreMenuItems(DataRow drCred, DataAccess dalog, DataTable dtBatch)
         {
             string storewaypointId = drCred["grabstorewaypointid"].ToString().Trim();
+            string orgShortName = drCred["orgShortName"].ToString().Trim();
+            string locRef = drCred["locRef"].ToString().Trim();
+            string rvcRef = drCred["rvcRef"].ToString().Trim();
+            string urlAPI = drCred["urlAPI"].ToString().Trim();
 
-            try
+            string id_token = new OracleG2().LoginOracleG2_TokenCache(drCred, null);
+            if (string.IsNullOrEmpty(id_token)) return;
+
+            using (WebClient webClient = new WebClient())
             {
-                string orgShortName = drCred["orgShortName"].ToString().Trim();
-                string locRef = drCred["locRef"].ToString().Trim();
-                string rvcRef = drCred["rvcRef"].ToString().Trim();
-                string urlAPI = drCred["urlAPI"].ToString().Trim();
+                webClient.Headers["Content-Type"] = "application/json";
+                webClient.Headers[HttpRequestHeader.Authorization] = "Bearer " + id_token;
 
-                OracleG2 oOracleG2 = new OracleG2();
-                string id_token = oOracleG2.LoginOracleG2_TokenCache(drCred, null);
+                var sResponse = webClient.DownloadString($"{urlAPI}menus/items/unavailable?orgShortName={orgShortName}&locRef={locRef}&rvcRef={rvcRef}");
+                var jsonObj = JObject.Parse(sResponse);
 
-                if (string.IsNullOrEmpty(id_token)) return;
+                var allIdSet = jsonObj["items"] != null ? new HashSet<string>(
+                    jsonObj["items"].SelectMany(item => item["definitions"]
+                        .Select(def => $"{item["menuItemId"]}:{def["definitionSequence"]}"))) : new HashSet<string>();
 
-                using (WebClient webClient = new WebClient())
+                var dsLog = dalog.ExecuteSelectQuery($@"
+                     SELECT DISTINCT l.StorewaypointId, l.InventoryItemId, l.InventoryItemName, l.menuitemId,
+                     LEFT(l.MenuItemId_DefSeq_PriceSeq, 11) AS MenuItemIdSeq
+                     FROM tb_Cursus_InventoryUpdate_Log l WITH (NOLOCK)
+                     JOIN tb_Cursus_OracleG2_SubMenu sm WITH (NOLOCK) ON sm.menuitemid = l.menuitemid
+                     JOIN tb_Cursus_StoreInventoryMainV2 m WITH (NOLOCK) ON sm.InventoryItemId = m.InventoryItemId
+                     WHERE l.NewValue = 0 AND m.InventoryItemavailable = 0 AND l.StorewaypointId = '{storewaypointId}'");
+
+
+                foreach (DataRow row in dsLog.Tables[0].Rows)
                 {
-                    webClient.Headers["Content-Type"] = "application/json";
-                    webClient.Headers[HttpRequestHeader.Authorization] = "Bearer " + id_token;
-
-                    string sResponse = webClient.DownloadString(
-                        $"{urlAPI}menus/items/unavailable?orgShortName={orgShortName}&locRef={locRef}&rvcRef={rvcRef}");
-
-                    JObject jsonObj = JObject.Parse(sResponse);
-                    HashSet<string> allIdSet = jsonObj["items"] != null ? new HashSet<string>(
-                        jsonObj["items"].SelectMany(item =>
-                            item["definitions"].Select(def => $"{item["menuItemId"]}:{def["definitionSequence"]}"))
-                        ) : new HashSet<string>();
-
-                    DataSet dsLog = dalog.ExecuteSelectQuery($@"
-                        SELECT StorewaypointId, InventoryItemId, InventoryItemName, menuitemId,
-                               LEFT(MenuItemId_DefSeq_PriceSeq, 11) AS MenuItemIdSeq
-                        FROM tb_Cursus_InventoryUpdate_Log
-                        WHERE NewValue = 0
-                          AND Inventoryitemid IN (
-                              SELECT InventoryItemId
-                              FROM tb_Cursus_StoreInventoryMainV2
-                              WHERE InventoryItemavailable = 0)
-                          AND StorewaypointId = '{storewaypointId}'");
-
-                    foreach (DataRow row in dsLog.Tables[0].Rows)
+                    var defSeq = row["MenuItemIdSeq"].ToString();
+                    if (!allIdSet.Contains(defSeq))
                     {
-                        string defSeq = row["MenuItemIdSeq"].ToString();
-                        if (!allIdSet.Contains(defSeq))
-                        {
-                            dtBatch.Rows.Add(
-      Convert.ToInt32(row["StorewaypointId"]),
-      Convert.ToInt32(row["InventoryItemId"]),
-      Convert.ToInt32(row["menuitemId"]),
-      defSeq,  // MenuItemId_DefSeq_PriceSeq
-      row["InventoryItemName"].ToString());
-                        }
+                        dtBatch.Rows.Add(
+                            Convert.ToInt32(row["StorewaypointId"]),
+                            Convert.ToInt32(row["InventoryItemId"]),
+                            Convert.ToInt32(row["menuitemId"]),
+                            defSeq,
+                            row["InventoryItemName"].ToString()
+                        );
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                Utilities.WriteLog($"❌ An error occurred in ProcessStoreMenuItems: {ex.Message}");
             }
         }
 
-        private void ProcessDisableMenuItems(DataRow drCred, DataAccess dalog, DataTable dtBatchDisable)
+        private void ProcessDisableMenuItems(DataRow drCred, DataAccess dalog, DataTable dtBatch)
         {
             string storewaypointId = drCred["grabstorewaypointid"].ToString().Trim();
+            string orgShortName = drCred["orgShortName"].ToString().Trim();
+            string locRef = drCred["locRef"].ToString().Trim();
+            string rvcRef = drCred["rvcRef"].ToString().Trim();
+            string urlAPI = drCred["urlAPI"].ToString().Trim();
 
-            try
+            string id_token = new OracleG2().LoginOracleG2_TokenCache(drCred, null);
+            if (string.IsNullOrEmpty(id_token)) return;
+
+            using (WebClient webClient = new WebClient())
             {
-                string orgShortName = drCred["orgShortName"].ToString().Trim();
-                string locRef = drCred["locRef"].ToString().Trim();
-                string rvcRef = drCred["rvcRef"].ToString().Trim();
-                string urlAPI = drCred["urlAPI"].ToString().Trim();
+                webClient.Headers["Content-Type"] = "application/json";
+                webClient.Headers[HttpRequestHeader.Authorization] = "Bearer " + id_token;
 
-                OracleG2 oOracleG2 = new OracleG2();
-                string id_token = oOracleG2.LoginOracleG2_TokenCache(drCred, null);
+                var sResponse = webClient.DownloadString($"{urlAPI}menus/items/unavailable?orgShortName={orgShortName}&locRef={locRef}&rvcRef={rvcRef}");
+                var jsonObj = JObject.Parse(sResponse);
 
-                if (string.IsNullOrEmpty(id_token)) return;
-
-                using (WebClient webClient = new WebClient())
+                foreach (var item in jsonObj["items"] ?? new JArray())
                 {
-                    webClient.Headers["Content-Type"] = "application/json";
-                    webClient.Headers[HttpRequestHeader.Authorization] = "Bearer " + id_token;
-
-                    string sResponse = webClient.DownloadString(
-                        $"{urlAPI}menus/items/unavailable?orgShortName={orgShortName}&locRef={locRef}&rvcRef={rvcRef}");
-
-                    JObject jsonObj = JObject.Parse(sResponse);
-
-                    if (jsonObj["items"] != null)
+                    string menuId = item["menuItemId"].ToString();
+                    foreach (var def in item["definitions"])
                     {
-                        foreach (var item in jsonObj["items"])
-                        {
-                            var menuId = item["menuItemId"].ToString();
-                            foreach (var def in item["definitions"])
-                            {
-                                var defSeq = def["definitionSequence"].ToString();
-                                dtBatchDisable.Rows.Add(Convert.ToInt32(storewaypointId), $"{menuId}:{defSeq}");
-                            }
-                        }
+                        string defSeq = def["definitionSequence"].ToString();
+                        dtBatch.Rows.Add(Convert.ToInt32(storewaypointId), $"{menuId}:{defSeq}");
                     }
                 }
-            }
-            catch (Exception)
-            {
-                // Log handled in caller
             }
         }
 
@@ -230,6 +227,26 @@ namespace OracleG2MenuitemsUpdate
             dt.Columns.Add("StorewaypointId", typeof(int));
             dt.Columns.Add("MenuItemId_DefSeq", typeof(string));
             return dt;
+        }
+    }
+
+    public static class EnumerableExtensions
+    {
+        public static IEnumerable<IEnumerable<T>> Batch<T>(this IEnumerable<T> source, int size)
+        {
+            T[] bucket = null;
+            int count = 0;
+            foreach (var item in source)
+            {
+                if (bucket == null) bucket = new T[size];
+                bucket[count++] = item;
+                if (count != size) continue;
+                yield return bucket;
+                bucket = null;
+                count = 0;
+            }
+            if (bucket != null && count > 0)
+                yield return bucket.Take(count);
         }
     }
 }

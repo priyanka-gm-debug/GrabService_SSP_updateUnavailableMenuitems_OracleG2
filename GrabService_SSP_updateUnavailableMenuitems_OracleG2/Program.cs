@@ -10,14 +10,13 @@ namespace OracleG2MenuitemsUpdate
     {
         static void Main(string[] args)
         {
-            string task = args.Length > 0 ? args[0].ToLower() : "At every 20 min";
+            string task = args.Length > 0 ? args[0].ToLower() : "At every 1 hour";
 
             Utilities.WriteLog($"Starting {task} task...");
             try
             {
                 DataAccess dataAccess = new DataAccess();
                 OracleG2MenuitemsUpdate MenuitemsUpdate = new OracleG2MenuitemsUpdate();
-                //tokenHandler.update_availablemenuItems_SSP();
                 MenuitemsUpdate.update_menuItems_SSP();
                 Utilities.WriteLog($"{task} task completed.");
             }

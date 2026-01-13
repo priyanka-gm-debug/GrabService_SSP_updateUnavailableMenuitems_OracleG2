@@ -1,18 +1,26 @@
 ﻿using System;
 using System.IO;
 
-namespace OracleG2MenuitemsUpdate
+public static class Utilities
 {
-    public static class Utilities
+    private static readonly string logFilePath = @"C:\Temp\PROD_SSP_Unavailable_MenuItems.txt";
+
+    public static void WriteLog(string message)
     {
-        public static void WriteLog(string message)
+        try
         {
-            try
+            if (!Directory.Exists(Path.GetDirectoryName(logFilePath)))
+                Directory.CreateDirectory(Path.GetDirectoryName(logFilePath));
+
+            using (StreamWriter sw = new StreamWriter(logFilePath, true))
             {
-                string path = @"C:\Temp\POS_SSP_Unavailable_MenuItems.txt";
-                File.AppendAllText(path, DateTime.Now + ": " + message + Environment.NewLine);
+                sw.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} | {message}");
             }
-            catch { /* Ignore logging failures */ }
+        }
+        catch (Exception ex)
+        {
+            // Fails silently or log elsewhere
+            Console.WriteLine($"Log write failed: {ex.Message}");
         }
     }
 }
